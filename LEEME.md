@@ -1,4 +1,8 @@
-# OralIA v3.0: código para publicar en línea
+# OralIA v3.0
+
+Sitio: https://oraliauvm.vercel.app
+
+Autoprueba: https://oraliauvm.vercel.app/#autoprueba (también en Perfil → Datos de demostración → «Ejecutar autoprueba»).
 
 Esta carpeta trae la versión web de OralIA v3.0. Suma a la v2.1 la navegación que funciona dentro de la app de Claude, el correo con enlaces reales, la autoprueba y los datos compartidos cuando se abre desde su enlace de Claude.
 
