@@ -12,7 +12,7 @@ Esta carpeta trae la versión web de OralIA v3.1. Suma a la v3.0 un detector que
 |---|---|
 | `index.html` | La app completa: pantallas, estilos y código JavaScript legible (unos 320 KB). |
 | `ort_glue.txt`, `ort_wasm.wasm` | Motor onnxruntime-web 1.20.1 (Microsoft, licencia MIT) que ejecuta la IA en el navegador. |
-| `modelo_1.txt`, `modelo_2.txt` | Modelo InceptionV3 cuantizado a 8 bits, en base64 y partido en dos. Cada parte pesa menos de 25 MB, el límite para subir archivos desde la página de GitHub. |
+| `modelo_v31_1.txt`, `modelo_v31_2.txt` | Modelo InceptionV3 cuantizado a 8 bits con el detector de fotos de la boca, en base64 y partido en dos. Cada parte pesa menos de 25 MB, el límite para subir archivos desde la página de GitHub. |
 
 ## Probarla en el computador
 
