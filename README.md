@@ -1,10 +1,10 @@
-# OralIA v3.0
+# OralIA v3.1
 
 Sitio: https://oraliauvm.vercel.app
 
 Autoprueba: https://oraliauvm.vercel.app/#autoprueba (también en Perfil → Datos de demostración → «Ejecutar autoprueba»).
 
-Esta carpeta trae la versión web de OralIA v3.0. Suma a la v2.1 la navegación que funciona dentro de la app de Claude, el correo con enlaces reales, la autoprueba y los datos compartidos cuando se abre desde su enlace de Claude.
+Esta carpeta trae la versión web de OralIA v3.1. Suma a la v3.0 un detector que rechaza fotos que no son de la boca, el botón Compartir reporte en lugar del correo y una sola base de datos para el celular, el PC y la app de Claude.
 
 ## Archivos
 
@@ -23,7 +23,7 @@ cd carpeta_de_estos_archivos
 python -m http.server 8000
 ```
 
-Luego se abre `http://localhost:8000` en Chrome o Edge. Para usarla con doble clic está el archivo único `OralIA_v3.0.html` de la carpeta oralia.
+Luego se abre `http://localhost:8000` en Chrome o Edge. Para usarla con doble clic está el archivo único `OralIA_v3.1.html` de la carpeta oralia.
 
 ## Publicarla con GitHub Pages
 

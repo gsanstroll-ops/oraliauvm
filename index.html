@@ -199,13 +199,13 @@ typeof exports=="object"&&typeof module=="object"&&(module.exports=ort);
 'use strict';
 (function(){
 /* =====================================================================
-   OralIA · Prototipo navegable v3.0 (académico) con IA entrenada, para el público y con datos compartidos
+   OralIA · Prototipo navegable v3.1 (académico) con IA entrenada, para el público y con datos compartidos
    Componentes en el navegador, con los nombres del diseño:
    Mobile Client App / Web Specialist Portal (interfaz), API Gateway / Backend (simulado),
    Pre-Analytics Validator, AI Inference Engine (InceptionV3 entrenado, onnxruntime-web),
    Risk Engine, Report & Notification Service. Funciona sin conexión: el modelo viaja en el archivo.
    ===================================================================== */
-const VERSION = 'v3.0';
+const VERSION = 'v3.1';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -334,7 +334,8 @@ const Validator = {
     oscura: 'Poca luz: use la linterna del teléfono o acérquese a una ventana.',
     sobreexpuesta: 'Imagen sobreexpuesta: evite el flash directo y los reflejos.',
     bajo_contraste: 'Contraste insuficiente: limpie el lente y evite la luz de fondo.',
-    resolucion: 'Resolución insuficiente: use la cámara trasera o una foto de mayor tamaño.'
+    resolucion: 'Resolución insuficiente: use la cámara trasera o una foto de mayor tamaño.',
+    no_boca: 'No parece una foto de la boca: abra bien la boca y acerque la cámara a la lesión, a 10 o 15 cm.'
   }
 };
 
@@ -356,7 +357,8 @@ function boxBlurF(a, w, h, r){
 }
 /* Parámetros del modelo exportado desde el entrenamiento (metricas.json). */
 const MODELO = {
-  version: 'oralia-inceptionv3-tl-1.0 (ONNX int8)',
+  version: 'oralia-inceptionv3-tl-1.1 (ONNX int8 + detector de fotos de la boca)',
+  umbral_boca: 0.30,          // error relativo de reconstrucción PCA (k = 64); fotos del dataset: máximo 0,28
   umbral: 0.463313,            // 90% de sensibilidad en validación cruzada
   umbral_alto: 0.717100,  // 95% de especificidad en validación cruzada
   entrada: 299, lado_reduccion: 400,
@@ -431,6 +433,14 @@ const AIEngine = {
     for (let i = 0; i < N; i++) for (let k = 0; k < 3; k++) t[k * N + i] = (d[i * 4 + k] / 255 - MODELO.media[k]) / MODELO.desv[k];
     return new ort.Tensor('float32', t, [1, 3, E, E]);
   },
+  /* Detector de fotos fuera de distribución: el grafo entrega «ood», el error relativo con que las 64 componentes
+     principales de las fotos de entrenamiento reconstruyen las características de la foto. Sobre 0,30 no es una boca. */
+  async esBoca(img){
+    await this.cargar();
+    const r = await this.sesion.run({imagen: this.tensor(img)});
+    const ood = r.ood ? r.ood.data[0] : 0;
+    return {ood: round4(ood), boca: ood <= MODELO.umbral_boca};
+  },
   async inferir(img, {precalculado = null} = {}){
     if (!Config.iaDisponible) throw err(503, 'El motor de IA no está disponible en este momento.');
     if (precalculado) return Object.assign({}, precalculado, {contorno: contornoDesdeMapa(precalculado.mapa_cam)});
@@ -441,7 +451,7 @@ const AIEngine = {
     const cam = (cancer ? r.cam_pos : r.cam_neg).data; let max = 0; for (const v of cam) if (v > max) max = v;
     const mapa_cam = Array.from(cam, v => round3(max > 0 ? v / max : 0));
     return {prob_malignidad: round4(prob), clase_predicha: cancer ? 'cancer' : 'no_cancer', mapa_cam, contorno: contornoDesdeMapa(mapa_cam),
-            tiempo_inferencia_ms: Math.round(performance.now() - t0), version_modelo: this.version_modelo};
+            tiempo_inferencia_ms: Math.round(performance.now() - t0), version_modelo: this.version_modelo, ood: r.ood ? round4(r.ood.data[0]) : null};
   }
 };
 const sospechaTxt = c => c === 'cancer' ? 'Sospecha de malignidad' : 'Sin sospecha';
@@ -496,6 +506,19 @@ function ajustarBrillo(c, f){
 }
 let _ejemplos = null;
 function ejemplosReales(){ if (!_ejemplos){ const el = document.getElementById('oralia-ejemplos'); _ejemplos = el ? JSON.parse(el.textContent) : {}; } return _ejemplos; }
+/* Imagen de prueba que no es una boca: un paisaje dibujado (pasa el control de calidad y el detector la rechaza). */
+function fotoNoBoca(){
+  const c = document.createElement('canvas'); c.width = 480; c.height = 360; const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, 0, 220); g.addColorStop(0, '#5BA8E0'); g.addColorStop(1, '#CFE9F7'); x.fillStyle = g; x.fillRect(0, 0, 480, 220);
+  x.fillStyle = '#4E9A3A'; x.fillRect(0, 220, 480, 140);
+  const el = (cx, cy, rx, ry, col) => { x.fillStyle = col; x.beginPath(); x.ellipse(cx, cy, rx, ry, 0, 0, 2 * Math.PI); x.fill(); };
+  el(440, 260, 180, 70, '#3F7F2F'); el(390, 70, 40, 40, '#FFD54F');
+  x.fillStyle = '#C8875A'; x.fillRect(110, 170, 140, 110);
+  x.fillStyle = '#9E3B2E'; x.beginPath(); x.moveTo(100, 170); x.lineTo(180, 110); x.lineTo(260, 170); x.closePath(); x.fill();
+  x.fillStyle = '#5D3A1A'; x.fillRect(165, 215, 32, 65); x.fillStyle = '#E3F2FD'; x.fillRect(125, 190, 28, 28);
+  x.fillStyle = '#6D4C41'; x.fillRect(320, 190, 16, 60); el(328, 175, 38, 38, '#2E7D32');
+  return c;
+}
 async function ejemplo(nombre, {desenfoque = 0, brillo = 1} = {}){
   const e = ejemplosReales()[nombre]; if (!e) throw err(404, 'No existe la foto de ejemplo ' + nombre);
   const img = await cargarImagen(e.dataUrl); const c = lienzo(img.naturalWidth, img.naturalHeight); c.getContext('2d').drawImage(img, 0, 0);
@@ -840,6 +863,12 @@ const Sync = {
 
 /* Base de datos en internet (OralIA API en Neon): misma forma que la base del artefacto (collection/onSnapshot y doc/set/delete/get).
    Cada 3 segundos pide los cambios desde la última revisión y avisa a cada colección suscrita. */
+async function apiResponde(base){
+  try {
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null; const t = setTimeout(() => ctl && ctl.abort(), 3500);
+    const r = await fetch(base + '/', {cache: 'no-store', signal: ctl ? ctl.signal : undefined}); clearTimeout(t); return r.ok;
+  } catch (e){ return false; }
+}
 function dbHttp(base, alReconectar){
   const subs = {}, datos = {}; let cursor = 0, primera = false, enCurso = false, fallas = 0, timer = null;
   const snapDoc = (id, d) => ({id, exists: d != null, data: () => d, metadata: {fromCache: false, hasPendingWrites: false}});
@@ -902,9 +931,17 @@ const Nube = {
   async iniciar(){
     const api = !window.ORALIA_SIN_NUBE && typeof window.ORALIA_API === 'string' && /^https:\/\//.test(window.ORALIA_API) ? window.ORALIA_API.replace(/\/+$/, '') : null;
     let db = null, user = null, dl = null;
-    if (await esperarClaude(api ? 1500 : 4000)){
-      this.modo = 'claude'; this.estado = 'conectando'; actualizarRed();
-      try { [db, user, dl] = await Promise.all([claude.use('db'), claude.use('user'), claude.use('downloads')]); } catch (e) {}
+    const enClaude = await esperarClaude(api ? 1500 : 4000);
+    if (enClaude){ try { dl = await claude.use('downloads'); } catch (e) {} }
+    /* La base de OralIA en internet tiene prioridad: así el sitio, el archivo y la app de Claude ven los mismos casos.
+       La base del artefacto de Claude queda solo como respaldo si la API no responde desde la app de Claude. */
+    if (api && (!enClaude || await apiResponde(api))){
+      this.modo = 'internet'; this.estado = 'conectando'; actualizarRed();
+      db = dbHttp(api, () => this.programar());
+      window.addEventListener('online', () => this.programar());
+    } else if (enClaude){
+      this.modo = 'claude'; this.aislado = !!api; this.estado = 'conectando'; actualizarRed();
+      try { [db, user] = await Promise.all([claude.use('db'), claude.use('user')]); } catch (e) {}
     } else if (api){
       this.modo = 'internet'; this.estado = 'conectando'; actualizarRed();
       db = dbHttp(api, () => this.programar());
@@ -1009,6 +1046,7 @@ const Nube = {
   },
   texto(){
     if (!navigator.onLine) return 'Sin conexión';
+    if (this.aislado && this.estado === 'compartido') return 'Solo en Claude';
     return {compartido: 'Compartido', lectura: 'Solo lectura', conectando: 'Conectando…'}[this.estado] || 'En línea';
   },
   detalle(){
@@ -1077,7 +1115,8 @@ function actualizarRed(){
   const on = navigator.onLine; const n = $('#net');
   n.textContent = Nube.texto(); n.title = Nube.detalle(); n.classList.toggle('off', !on); n.classList.toggle('nube', on && Nube.estado === 'compartido');
   const pend = S && S.cola ? S.cola.length : 0;
-  $('#banner').textContent = !on ? 'Sin conexión: la foto y la ficha se guardan en el dispositivo y se sincronizan al volver la señal.' + (pend ? ` Pendientes: ${pend}.` : '') : '';
+  $('#banner').textContent = !on ? 'Sin conexión: la foto y la ficha se guardan en el dispositivo y se sincronizan al volver la señal.' + (pend ? ` Pendientes: ${pend}.` : '')
+    : (Nube.aislado ? 'Esta copia de OralIA dentro de la app de Claude no comparte datos con el sitio. Para ver los mismos casos en el celular y en el computador, abra oraliauvm.vercel.app.' : '');
 }
 function pintarNav(){
   const ses = S.sesion && !S.sesion.mfaPendiente ? S.sesion : null;
@@ -1203,7 +1242,7 @@ function vGuia(){
       <li><span class="n" aria-hidden="true">2</span><div><b>Tome una foto de la lesión</b>Con buena luz y a 10 a 15 cm. La app le avisa si la foto salió borrosa u oscura. También puede usar una foto de ejemplo.</div></li>
       <li><span class="n" aria-hidden="true">3</span><div><b>Responda unas preguntas</b>Edad, desde cuándo tiene la lesión, si duele o sangra, y si fuma o toma alcohol.</div></li>
       <li><span class="n" aria-hidden="true">4</span><div><b>Mire su resultado</b>La IA analiza la foto en su propio equipo, sin enviarla a internet. Verá su nivel de riesgo y qué hacer.</div></li>
-      <li><span class="n" aria-hidden="true">5</span><div><b>Guarde o envíe el reporte</b>Puede descargar el reporte en PDF o enviarlo por correo a usted, a un familiar o a su dentista. Si el riesgo es alto, puede derivar el caso a un especialista.</div></li>
+      <li><span class="n" aria-hidden="true">5</span><div><b>Guarde o comparta el reporte</b>Descargue el reporte en PDF o, en el teléfono, compártalo por WhatsApp u otra app. Si el riesgo es moderado o alto, derive el caso: el especialista lo verá en OralIA desde su computador.</div></li>
     </ol>
     <h3>¿Qué significan los colores?</h3>
     <div class="colores">
@@ -1275,7 +1314,7 @@ function vCaptura(){
   return {titulo: 'Capturar fotografía', atras: '#/inicio', html: `<section class="wrap">
     <p class="step">Paso 1 de 3 · Foto de la lesión</p><h2>Fotografía de la lesión</h2>
     <div class="camera" id="camara">${ft ? `<img src="${ft.dataUrl}" alt="Vista previa de la fotografía seleccionada">` : '<span>Vista de cámara</span>'}<div class="oval"></div></div>
-    <ul class="guide" aria-label="Asistente de captura">${g(['oscura', 'sobreexpuesta'], 'Luz adecuada')}${g(['borrosa'], 'Enfoque')}${g(['bajo_contraste'], 'Contraste')}${g(['resolucion'], 'Resolución')}</ul>
+    <ul class="guide" aria-label="Asistente de captura">${g(['oscura', 'sobreexpuesta'], 'Luz adecuada')}${g(['borrosa'], 'Enfoque')}${g(['bajo_contraste'], 'Contraste')}${g(['resolucion'], 'Resolución')}${g(['no_boca'], 'Foto de la boca')}</ul>
     <div class="alert ${ft ? (ft.apta ? 'ok' : 'bad') : 'info'}" id="qAlert" role="${ft && !ft.apta ? 'alert' : 'status'}">${ft ? (ft.apta ? `Imagen apta. Nitidez ${num(ft.nitidez_score, 0)} · contraste ${num(ft.contraste_score, 0)} · ${esc(ft.formato)} ${esc(ft.resolucion)}.` : esc(motivos)) : 'Encuadre la lesión dentro del óvalo, con buena luz y a 10-15 cm de distancia.'}</div>
     <p class="error" id="fmtError" role="alert"></p>
     <input id="inGaleria" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" class="vh" tabindex="-1" aria-hidden="true">
@@ -1285,6 +1324,7 @@ function vCaptura(){
       <p class="small muted">Fotografías clínicas reales del conjunto de prueba del curso (DataSet_Kaagle_2.0), que el modelo no vio durante el entrenamiento. «Borrosa» y «Oscura» son la misma foto degradada en el navegador.</p>
       <div class="row"><button class="btn ghost sm" type="button" data-ej="lesion">Con lesión</button><button class="btn ghost sm" type="button" data-ej="sana">Sin lesión</button></div>
       <div class="row"><button class="btn ghost sm" type="button" data-ej="borrosa">Borrosa</button><button class="btn ghost sm" type="button" data-ej="oscura">Oscura</button></div>
+      <div class="row"><button class="btn ghost sm" type="button" data-ej="otra">No es una boca</button></div>
     </details>
     <button class="btn primary" type="button" id="btnFicha" ${ft && ft.apta ? '' : 'disabled'}>Continuar a la ficha</button>
     <details><summary>¿Cómo tomar una buena foto?</summary><ul class="small"><li>Lave sus manos y enjuague su boca.</li><li>Use la cámara trasera y la linterna del teléfono.</li><li>Abra bien la boca y ubique la lesión dentro del óvalo.</li><li>Mantenga el teléfono quieto hasta que enfoque.</li></ul></details>
@@ -1299,6 +1339,10 @@ function vCaptura(){
     };
     const aplicarFoto = async (img, formato) => {
       const q = Validator.validarCalidad(img);
+      if (q.apta && Config.iaDisponible){
+        const al = $('#qAlert', m); if (al){ al.className = 'alert info'; al.setAttribute('role', 'status'); al.textContent = 'Revisando que la foto sea de la boca…'; }
+        try { const b = await AIEngine.esBoca(img); q.ood = b.ood; if (!b.boca){ q.apta = false; q.motivos.push('no_boca'); } } catch (e) {}
+      }
       S.borrador.foto = Object.assign({dataUrl: await reducir(img), formato, estado_validacion: q.apta ? 'Aprobada' : 'Rechazada'}, q);
       S.borrador.intentos = (S.borrador.intentos || 0) + 1;
       persist(); router();
@@ -1309,7 +1353,7 @@ function vCaptura(){
     $('#inCamara', m).onchange = ev => ev.target.files[0] && procesar(ev.target.files[0]);
     $$('[data-ej]', m).forEach(bt => bt.onclick = async () => {
       const k = bt.dataset.ej;
-      const c = await ejemplo(k === 'lesion' ? 'ejemplo_lesion' : 'ejemplo_sana', {desenfoque: k === 'borrosa' ? 4 : 0, brillo: k === 'oscura' ? .22 : 1});
+      const c = k === 'otra' ? fotoNoBoca() : await ejemplo(k === 'lesion' ? 'ejemplo_lesion' : 'ejemplo_sana', {desenfoque: k === 'borrosa' ? 4 : 0, brillo: k === 'oscura' ? .22 : 1});
       await aplicarFoto(await cargarImagen(aDataUrl(c)), 'JPG');
     });
     $('#btnFicha', m).onclick = () => { Nav.ir('#/ficha'); };
@@ -1431,73 +1475,25 @@ function vResultado(id){
     <p>${r.nivel_riesgo === 'Bajo' ? 'Recomendación: control preventivo con su odontólogo en 6 meses, o antes si la lesión persiste.' : 'Recomendación: derivación prioritaria a un especialista.'}</p>
     ${notaDeriv}
     <button class="btn outline" type="button" id="btnPdf">Descargar reporte PDF</button>
-    <button class="btn primary" type="button" id="btnCorreo" aria-expanded="false" aria-controls="panelCorreo">Enviar reporte por correo</button>
-    <div class="envio" id="panelCorreo" hidden>
-      <label for="correoDestino">Correo de destino</label>
-      <input id="correoDestino" type="email" inputmode="email" autocomplete="email" value="${esc((pacienteActual() || {}).correo || '')}">
-      <p class="small muted" style="margin:6px 0 0">Puede ser su correo, el de un familiar o el de su dentista.</p>
-      <p class="error" id="correoError" role="alert"></p>
-      <a class="btn primary" id="lnkGmail" href="https://mail.google.com/" target="_blank" rel="noopener" data-via="gmail">Enviar con Gmail</a>
-      <a class="btn outline" id="lnkMail" href="mailto:" data-via="app">Usar otra app de correo</a>
-      <button class="btn outline" type="button" id="btnCopiarCorreo">Copiar el texto del correo</button>
-      <button class="btn outline" type="button" data-via="compartir" id="btnCompartir" hidden>Compartir el PDF</button>
-      <textarea id="textoCorreo" rows="7" readonly hidden aria-label="Texto del correo para copiar"></textarea>
-      <p class="small muted" style="margin:8px 0 0">Gmail abre otra pestaña con el correo listo y usted solo presiona Enviar. Si su app de correo no se abre, copie el texto y péguelo en un correo nuevo. Para adjuntar el reporte use «Descargar reporte PDF»${enArtefacto() ? '' : ' o, en el teléfono, «Compartir el PDF»'}.</p>
-    </div>
-    ${(r.envios || []).length ? `<p class="small muted" id="ultimoEnvio">Último envío: ${esc(r.envios[r.envios.length - 1].destino)} · ${fmtHora(r.envios[r.envios.length - 1].ts)} · ${esc(VIA_TXT[r.envios[r.envios.length - 1].via] || '')}</p>` : ''}
+    <button class="btn primary" type="button" id="btnCompartir" hidden>Compartir reporte</button>
+    <p class="small muted" id="ayudaCompartir">${r.nivel_riesgo !== 'Bajo' ? 'Al derivar el caso, el especialista lo ve en OralIA desde su computador, sin enviar correos.' : 'Guarde el PDF para mostrárselo a su odontólogo en su próximo control.'} En el teléfono, «Compartir reporte» envía el PDF por WhatsApp u otra app.</p>
     ${r.nivel_riesgo !== 'Bajo' && !deriv ? '<button class="btn cta" type="button" id="btnDerivar">Derivar a especialista</button>' : ''}
     <details><summary>Historial de estados del caso</summary><ol class="timeline" id="timeline">${f.historial.map(h => `<li><b>${esc(h.estado)}</b> · ${esc(h.evento)}${h.cond ? ' [' + esc(h.cond) + ']' : ''} · ${fmtHora(h.ts)}</li>`).join('')}</ol></details>
     </div></div></section>`,
   despues(m){
     const cv = $('#cv', m); const pintar = () => pintarResultado(cv, foto, a, {mapa: $('#tMapa', m).checked, contorno: $('#tCont', m).checked});
     pintar(); $('#tMapa', m).onchange = pintar; $('#tCont', m).onchange = pintar;
-    $('#btnPdf', m).onclick = async () => { const bytes = await Report.generarPDF(id); {const est = await Report.descargar(bytes, `OralIA_Reporte_${f.codigo}.pdf`); toast({ok: 'Reporte PDF descargado.', cancelado: 'Descarga cancelada.', espera: 'Ya hay una descarga pendiente de confirmar.', quizas: 'Si el PDF no se descargó, abra OralIA en su navegador o envíe el reporte por correo.'}[est] || 'Reporte PDF descargado.'); } };
+    $('#btnPdf', m).onclick = async () => { const bytes = await Report.generarPDF(id); {const est = await Report.descargar(bytes, `OralIA_Reporte_${f.codigo}.pdf`); toast({ok: 'Reporte PDF descargado.', cancelado: 'Descarga cancelada.', espera: 'Ya hay una descarga pendiente de confirmar.', quizas: 'Si el PDF no se descargó, abra OralIA en su navegador o compártalo desde el teléfono.'}[est] || 'Reporte PDF descargado.'); } };
     const bd = $('#btnDerivar', m); if (bd) bd.onclick = () => { try { Api.derivar(id); toast('Caso derivado al especialista.'); router(); } catch (x){ toast(x.message); } };
-    const panel = $('#panelCorreo', m), bc = $('#btnCorreo', m), inp = $('#correoDestino', m), errC = $('#correoError', m);
-    const nombrePdf = `OralIA_Reporte_${f.codigo}.pdf`; let archivo = null;
-    bc.onclick = () => {
-      panel.hidden = !panel.hidden; bc.setAttribute('aria-expanded', String(!panel.hidden));
-      if (!panel.hidden){
-        inp.focus();
-        if (!archivo) Report.generarPDF(id).then(bytes => {
-          archivo = {bytes, file: (typeof File === 'function') ? new File([bytes], nombrePdf, {type: 'application/pdf'}) : null};
-          try { if (!enArtefacto() && archivo.file && navigator.canShare && navigator.canShare({files: [archivo.file]})) $('#btnCompartir', m).hidden = false; } catch (e) {}
-        }).catch(() => {});
-      }
-    };
-    const destino = (mostrar = true) => { const d = inp.value.trim().toLowerCase(); if (mostrar){ errC.textContent = ''; inp.removeAttribute('aria-invalid'); }
-      if (!emailValido(d)){ if (mostrar){ errC.textContent = 'Escriba un correo válido, por ejemplo nombre@gmail.com.'; inp.setAttribute('aria-invalid', 'true'); inp.focus(); } return null; } return d; };
-    const lg = $('#lnkGmail', m), lm = $('#lnkMail', m), tx = $('#textoCorreo', m);
-    const enlaces = () => { const d = inp.value.trim().toLowerCase(); const {asunto, cuerpo} = textoCorreo(f, a, r);
-      lg.href = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(d) + '&su=' + encodeURIComponent(asunto) + '&body=' + encodeURIComponent(cuerpo);
-      lm.href = 'mailto:' + encodeURIComponent(d) + '?subject=' + encodeURIComponent(asunto) + '&body=' + encodeURIComponent(cuerpo);
-      tx.value = 'Para: ' + d + '\nAsunto: ' + asunto + '\n\n' + cuerpo; };
-    enlaces(); inp.addEventListener('input', enlaces);
-    const anotar = via => { const d = destino(false); registrarEnvio(id, d, via);
-      const u = $('#ultimoEnvio', m); const t = `Último envío preparado: ${d} · ${fmtHora(Date.now())} · ${VIA_TXT[via]}`;
-      if (u) u.textContent = t; else panel.insertAdjacentHTML('afterend', `<p class="small muted" id="ultimoEnvio">${esc(t)}</p>`); };
-    lg.addEventListener('click', ev => {
-      const d = destino(); if (!d){ ev.preventDefault(); return; }
-      if (!navigator.onLine){ ev.preventDefault(); errC.textContent = 'Sin conexión: Gmail necesita internet. Copie el texto del correo o descargue el PDF.'; return; }
-      enlaces(); anotar('gmail'); toast('Gmail se abre en otra pestaña con el correo listo. Revise y presione Enviar.');
-    });
-    lm.addEventListener('click', ev => {
-      const d = destino(); if (!d){ ev.preventDefault(); return; }
-      enlaces(); anotar('app'); toast('Si su app de correo no se abrió, use «Copiar el texto del correo».');
-    });
-    $('#btnCopiarCorreo', m).onclick = async () => {
-      const d = destino(); if (!d) return; enlaces();
-      try { await navigator.clipboard.writeText(tx.value); toast('Texto copiado. Péguelo en un correo nuevo para ' + d + '.'); }
-      catch (e){ tx.hidden = false; tx.focus(); tx.select(); toast('Seleccione el texto y cópielo con Ctrl+C o con el menú del teléfono.'); }
-      anotar('copia');
-    };
-    $('#btnCompartir', m).onclick = async () => {
-      const d = destino(); if (!d) return;
-      if (!archivo || !archivo.file){ errC.textContent = 'El PDF todavía se está preparando. Intente de nuevo en un momento.'; return; }
-      const {asunto, cuerpo} = textoCorreo(f, a, r);
-      try { await navigator.share({files: [archivo.file], title: asunto, text: cuerpo}); }
-      catch (x){ if (x && x.name === 'AbortError') return; errC.textContent = 'Este equipo no permitió compartir el PDF. Use Gmail o descargue el PDF.'; return; }
-      toast('PDF compartido. Elija su app de correo y escriba ' + d + '.'); anotar('compartir');
+    const nombrePdf = `OralIA_Reporte_${f.codigo}.pdf`; const bs = $('#btnCompartir', m); let archivo = null;
+    if (!enArtefacto() && typeof File === 'function' && navigator.canShare){
+      Report.generarPDF(id).then(bytes => { const fl = new File([bytes], nombrePdf, {type: 'application/pdf'});
+        try { if (navigator.canShare({files: [fl]})){ archivo = fl; bs.hidden = false; } } catch (e) {} }).catch(() => {});
+    }
+    bs.onclick = async () => {
+      if (!archivo) return;
+      try { await navigator.share({files: [archivo], title: 'Reporte OralIA · Caso #' + f.codigo, text: 'Reporte de OralIA del caso #' + f.codigo + '. No reemplaza un diagnóstico médico.'}); toast('Reporte compartido.'); }
+      catch (x){ if (!x || x.name !== 'AbortError') toast('Este equipo no permitió compartir el PDF. Use «Descargar reporte PDF».'); }
     };
   }};
 }
@@ -1532,7 +1528,7 @@ function vCasos(idSel){
     if (!idSel) return;
     const det = Api.detalleCaso(idSel);
     { const sosp = det.analisis.clase_predicha === 'cancer'; pintarResultado($('#cvE', m), det.foto, det.analisis, {mapa: sosp, contorno: sosp}); }
-    $('#btnPdfE', m).onclick = async () => { const bytes = await Report.generarPDF(idSel); {const est = await Report.descargar(bytes, `OralIA_Reporte_${det.ficha.codigo}.pdf`); toast({ok: 'Reporte PDF descargado.', cancelado: 'Descarga cancelada.', espera: 'Ya hay una descarga pendiente de confirmar.', quizas: 'Si el PDF no se descargó, abra OralIA en su navegador o envíe el reporte por correo.'}[est] || 'Reporte PDF descargado.'); } };
+    $('#btnPdfE', m).onclick = async () => { const bytes = await Report.generarPDF(idSel); {const est = await Report.descargar(bytes, `OralIA_Reporte_${det.ficha.codigo}.pdf`); toast({ok: 'Reporte PDF descargado.', cancelado: 'Descarga cancelada.', espera: 'Ya hay una descarga pendiente de confirmar.', quizas: 'Si el PDF no se descargó, abra OralIA en su navegador o compártalo desde el teléfono.'}[est] || 'Reporte PDF descargado.'); } };
     const fc = $('#fControl', m); if (fc) fc.addEventListener('submit', ev => { ev.preventDefault(); try { Api.agendarControl(idSel, fc.fecha.value); toast('Control agendado y paciente notificado.'); router(); } catch (x){ $('#errControl', m).textContent = x.message; } });
     const fd = $('#fDescartar', m); if (fd) fd.addEventListener('submit', ev => { ev.preventDefault(); try { Api.descartar(idSel, fd.obs.value); toast('Sospecha descartada y paciente notificado.'); router(); } catch (x){ $('#errDesc', m).textContent = x.message; } });
   }};
@@ -1651,6 +1647,12 @@ async function autoprueba(){
   await paso('Formulario de ingreso', async () => { $('#correo').value = 'autoprueba@oralia.cl'; $('#clave').value = 'clave-incorrecta'; $('#consent').checked = true;
     $('#fLogin button[type="submit"]').click(); const t0 = Date.now(); while (!$('#loginError').textContent && Date.now() - t0 < 4000) await sleep(50);
     const t = $('#loginError').textContent; if (!/incorrectos/.test(t)) throw new Error('sin respuesta del formulario: «' + t + '»'); return 'el botón envía el formulario y rechaza la clave incorrecta'; });
+  await paso('Detector de fotos de la boca', async () => {
+    const boca = await AIEngine.esBoca(await cargarImagen(aDataUrl(await ejemplo('ejemplo_lesion'))));
+    const otra = await AIEngine.esBoca(await cargarImagen(aDataUrl(fotoNoBoca())));
+    if (!boca.boca) throw new Error('rechazó una foto de la boca (' + boca.ood + ')');
+    if (otra.boca) throw new Error('aceptó una imagen que no es de la boca (' + otra.ood + ')');
+    return `foto de la boca aceptada (${num(boca.ood)}) y paisaje rechazado (${num(otra.ood)}), umbral ${num(MODELO.umbral_boca)}`; });
   await paso('Base de datos compartida', async () => {
     { const t0 = Date.now(); while (!Nube.decidido && Date.now() - t0 < 6000) await sleep(100); }
     if (!Nube.modo) return 'no hay base en este modo: los datos quedan en este equipo';
@@ -1681,7 +1683,7 @@ async function autoprueba(){
       if (Nube.estado === 'compartido'){ Nube.programar(); const t0 = Date.now(); while (Date.now() - t0 < 15000 && (Nube.base().fichas[f.id_ficha] || Nube.base().reportes[rep.id_reporte])) await sleep(200); }
     }
   });
-  await paso('Descarga del PDF', async () => Nube.dl ? 'disponible: Claude pide confirmar cada descarga' : (enMarcoAislado() ? 'este marco puede bloquear descargas: abra OralIA en el navegador o envíe el reporte por correo' : 'descarga normal del navegador'));
+  await paso('Descarga del PDF', async () => Nube.dl ? 'disponible: Claude pide confirmar cada descarga' : (enMarcoAislado() ? 'este marco puede bloquear descargas: abra OralIA en el navegador' : 'descarga normal del navegador'));
   Api.logout(); S.sesion = sesion; persist(); Nav.ruta = null; Nav.ir(ruta);
   R.fin = new Date().toISOString(); pintar();
   if (Nube.db && Nube.estado === 'compartido'){ try { await Nube.db.doc('autoprueba/resultado-' + (S.disp || sufijoDisp())).set(JSON.parse(JSON.stringify(R))); } catch (e) {} }
